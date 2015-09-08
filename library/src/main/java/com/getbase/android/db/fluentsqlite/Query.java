@@ -1,6 +1,7 @@
 package com.getbase.android.db.fluentsqlite;
 
 import com.getbase.android.db.cursors.FluentCursor;
+import com.getbase.android.db.fluentsqlite.Expressions.CollatingSequence;
 import com.getbase.android.db.fluentsqlite.Expressions.Expression;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
@@ -20,12 +21,36 @@ import android.database.sqlite.SQLiteDatabase;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Set;
 
-public final class QueryBuilder {
-  private QueryBuilder() {
+public final class Query {
+  private final QueryBuilderImpl mQueryBuilder;
+
+  private Query(QueryBuilderImpl queryBuilder) {
+    mQueryBuilder = queryBuilder;
+  }
+
+  public FluentCursor perform(SQLiteDatabase db) {
+    return mQueryBuilder.perform(db);
+  }
+
+  public RawQuery toRawQuery() {
+    return mQueryBuilder.toRawQuery();
+  }
+
+  public QueryBuilder buildUpon() {
+    return mQueryBuilder.copy();
+  }
+
+  public Set<String> getTables() {
+    return mQueryBuilder.getTables();
+  }
+
+  private void getTables(ImmutableSet.Builder<String> builder) {
+    builder.addAll(mQueryBuilder.getTables());
   }
 
   private static final Function<String, String> SURROUND_WITH_PARENS = new Function<String, String>() {
@@ -35,11 +60,231 @@ public final class QueryBuilder {
     }
   };
 
-  public static Query select() {
-    return new QueryImpl();
+  public static QueryBuilder select() {
+    return new QueryBuilderImpl();
   }
 
-  private static class QueryImpl implements Query, ColumnAliasBuilder, LimitOffsetBuilder, OrderingTermBuilder, ColumnListTableSelector, ColumnsListAliasBuilder {
+  public static CompoundQueryBuilder select(Query query) {
+    return new CompoundQueryBuilderImpl(query);
+  }
+
+  public static CompoundQueryBuilder select(QueryBuilder queryBuilder) {
+    return select(queryBuilder.build());
+  }
+
+  public static Query union(Query... queries) {
+    Preconditions.checkNotNull(queries);
+    Preconditions.checkArgument(queries.length > 0);
+
+    CompoundQueryBuilder builder = select(queries[0]);
+    for (int i = 1; i < queries.length; i++) {
+      builder = builder.union(queries[i]);
+    }
+
+    return builder.build();
+  }
+
+  public static Query unionAll(Query... queries) {
+    Preconditions.checkNotNull(queries);
+    Preconditions.checkArgument(queries.length > 0);
+
+    CompoundQueryBuilder builder = select(queries[0]);
+    for (int i = 1; i < queries.length; i++) {
+      builder = builder.unionAll(queries[i]);
+    }
+
+    return builder.build();
+  }
+
+  public static Query intersect(Query... queries) {
+    Preconditions.checkNotNull(queries);
+    Preconditions.checkArgument(queries.length > 0);
+
+    CompoundQueryBuilder builder = select(queries[0]);
+    for (int i = 1; i < queries.length; i++) {
+      builder = builder.intersect(queries[i]);
+    }
+
+    return builder.build();
+  }
+
+  public interface CompoundQueryBuilder extends CompoundOrderByBuilder, CompoundLimitBuilder {
+    CompoundQueryBuilder union(Query query);
+    CompoundQueryBuilder union(QueryBuilder queryBuilder);
+
+    CompoundQueryBuilder unionAll(Query query);
+    CompoundQueryBuilder unionAll(QueryBuilder queryBuilder);
+
+    CompoundQueryBuilder intersect(Query query);
+    CompoundQueryBuilder intersect(QueryBuilder queryBuilder);
+
+    CompoundQueryBuilder except(Query query);
+    CompoundQueryBuilder except(QueryBuilder queryBuilder);
+
+    Query build();
+  }
+
+  public interface CompoundOrderByBuilder {
+    CompoundOrderingTermBuilder orderBy(String expression);
+    CompoundOrderingTermBuilder orderBy(Expression expression);
+  }
+
+  public interface CompoundOrderingTermBuilder extends CompoundOrderingDirectionSelector {
+    CompoundOrderingDirectionSelector collate(String collation);
+    CompoundOrderingDirectionSelector collate(CollatingSequence collation);
+  }
+
+  public interface CompoundOrderingDirectionSelector extends CompoundQueryBuilder {
+    CompoundQueryBuilder asc();
+    CompoundQueryBuilder desc();
+  }
+
+  public interface CompoundLimitBuilder {
+    CompoundLimitOffsetBuilder limit(String expression);
+    CompoundLimitOffsetBuilder limit(int limit);
+  }
+
+  public interface CompoundLimitOffsetBuilder extends CompoundQueryBuilder {
+    CompoundQueryBuilder offset(String expression);
+    CompoundQueryBuilder offset(int limit);
+  }
+
+  private static class CompoundQueryBuilderImpl implements CompoundQueryBuilder, CompoundOrderingTermBuilder, CompoundLimitOffsetBuilder {
+    private QueryBuilderImpl mQueryBuilder;
+
+    private CompoundQueryBuilderImpl(Query query) {
+      mQueryBuilder = query.mQueryBuilder.copy();
+      if (mQueryBuilder.isCompound()) {
+        mQueryBuilder.mCompoundQueryParts = Lists.newLinkedList();
+        mQueryBuilder.mCompoundQueryParts.add(new QueryOrOperator(query));
+      }
+    }
+
+    @Override
+    public CompoundQueryBuilder offset(String expression) {
+      mQueryBuilder.offset(expression);
+      return this;
+    }
+
+    @Override
+    public CompoundQueryBuilder offset(int limit) {
+      mQueryBuilder.offset(limit);
+      return this;
+    }
+
+    @Override
+    public CompoundOrderingDirectionSelector collate(String collation) {
+      mQueryBuilder.collate(collation);
+      return this;
+    }
+
+    @Override
+    public CompoundOrderingDirectionSelector collate(CollatingSequence collation) {
+      mQueryBuilder.collate(collation);
+      return this;
+    }
+
+    @Override
+    public CompoundQueryBuilder asc() {
+      mQueryBuilder.asc();
+      return this;
+    }
+
+    @Override
+    public CompoundQueryBuilder desc() {
+      mQueryBuilder.desc();
+      return this;
+    }
+
+    private CompoundQueryBuilder withCompoundQueryPart(Query queryPart, String operation) {
+      if (!mQueryBuilder.mCurrentQueryPart.isEmpty()) {
+        mQueryBuilder.mCompoundQueryParts.add(new QueryOrOperator(new QueryBuilderImpl(mQueryBuilder.mCurrentQueryPart).build()));
+      }
+
+      mQueryBuilder.mCompoundQueryParts.add(new QueryOrOperator(operation));
+      mQueryBuilder.mCompoundQueryParts.add(new QueryOrOperator(queryPart));
+      mQueryBuilder.mCurrentQueryPart = new QueryBuilderImpl.CompoundQueryPart();
+      return this;
+    }
+
+    @Override
+    public CompoundQueryBuilder union(Query query) {
+      return withCompoundQueryPart(query, "UNION");
+    }
+
+    @Override
+    public CompoundQueryBuilder union(QueryBuilder queryBuilder) {
+      return union(queryBuilder.build());
+    }
+
+    @Override
+    public CompoundQueryBuilder unionAll(Query query) {
+      return withCompoundQueryPart(query, "UNION ALL");
+    }
+
+    @Override
+    public CompoundQueryBuilder unionAll(QueryBuilder queryBuilder) {
+      return unionAll(queryBuilder.build());
+    }
+
+    @Override
+    public CompoundQueryBuilder intersect(Query query) {
+      return withCompoundQueryPart(query, "INTERSECT");
+    }
+
+    @Override
+    public CompoundQueryBuilder intersect(QueryBuilder queryBuilder) {
+      return intersect(queryBuilder.build());
+    }
+
+    @Override
+    public CompoundQueryBuilder except(Query query) {
+      return withCompoundQueryPart(query, "EXCEPT");
+    }
+
+    @Override
+    public CompoundQueryBuilder except(QueryBuilder queryBuilder) {
+      return except(queryBuilder.build());
+    }
+
+    @Override
+    public Query build() {
+      return new Query(mQueryBuilder.copy());
+    }
+
+    @Override
+    public CompoundLimitOffsetBuilder limit(String expression) {
+      mQueryBuilder.limit(expression);
+      return this;
+    }
+
+    @Override
+    public CompoundLimitOffsetBuilder limit(int limit) {
+      mQueryBuilder.limit(limit);
+      return this;
+    }
+
+    @Override
+    public CompoundOrderingTermBuilder orderBy(String expression) {
+      mQueryBuilder.orderBy(expression);
+      return this;
+    }
+
+    @Override
+    public CompoundOrderingTermBuilder orderBy(Expression expression) {
+      mQueryBuilder.orderBy(expression);
+      return this;
+    }
+  }
+
+  private static class QueryBuilderImpl implements QueryBuilder, ColumnAliasBuilder, LimitOffsetBuilder, OrderingTermBuilder, ColumnListTableSelector, ColumnsListAliasBuilder {
+
+    @Override
+    public Query build() {
+      buildPendingOrderByClause();
+
+      return new Query(copy());
+    }
 
     private static class CompoundQueryPart {
 
@@ -65,26 +310,42 @@ public final class QueryBuilder {
 
       private Set<String> mTablesUsedInExpressions = Sets.newHashSet();
 
+      private boolean isEmpty() {
+        return mProjection.isEmpty() &&
+            mColumnWithPotentialAlias == null &&
+            mColumnsWithPotentialTable.isEmpty() &&
+            mColumnsListsTableWithPotentialAlias == null &&
+            mGroupByExpressions.isEmpty() &&
+            mHaving.isEmpty() &&
+            mSelection.isEmpty() &&
+            mArgs.isEmpty() &&
+            mPendingTable == null &&
+            mTables.isEmpty() &&
+            Strings.isNullOrEmpty(mPendingJoinType) &&
+            mPendingJoin == null &&
+            mJoins.isEmpty();
+      }
+
       CompoundQueryPart() {
       }
 
       CompoundQueryPart(CompoundQueryPart other) {
         mIsDistinct = other.mIsDistinct;
-        mProjection = Lists.newCopyOnWriteArrayList(other.mProjection);
+        mProjection.addAll(other.mProjection);
         mColumnWithPotentialAlias = other.mColumnWithPotentialAlias;
-        mColumnsWithPotentialTable = Lists.newCopyOnWriteArrayList(other.mColumnsWithPotentialTable);
+        mColumnsWithPotentialTable.addAll(other.mColumnsWithPotentialTable);
         mColumnsListsTableWithPotentialAlias = other.mColumnsListsTableWithPotentialAlias;
 
-        mGroupByExpressions = Lists.newCopyOnWriteArrayList(other.mGroupByExpressions);
-        mHaving = Lists.newCopyOnWriteArrayList(other.mHaving);
+        mGroupByExpressions.addAll(other.mGroupByExpressions);
+        mHaving.addAll(other.mHaving);
 
-        mSelection = Lists.newCopyOnWriteArrayList(other.mSelection);
+        mSelection.addAll(other.mSelection);
 
-        mArgs = LinkedListMultimap.create(other.mArgs);
+        mArgs.putAll(other.mArgs);
 
         mPendingTable = other.mPendingTable;
 
-        mTables = Maps.newLinkedHashMap(other.mTables);
+        mTables.putAll(other.mTables);
 
         mPendingJoinType = other.mPendingJoinType;
         mPendingJoin = other.mPendingJoin != null ? new JoinSpec(other.mPendingJoin) : null;
@@ -94,7 +355,7 @@ public final class QueryBuilder {
           mJoins.add(new JoinSpec(join));
         }
 
-        mTablesUsedInExpressions = Sets.newCopyOnWriteArraySet(other.mTablesUsedInExpressions);
+        mTablesUsedInExpressions.addAll(other.mTablesUsedInExpressions);
       }
 
       private void addPendingColumn() {
@@ -191,10 +452,14 @@ public final class QueryBuilder {
           builder.append(join.mJoinType);
           builder.append("JOIN ");
 
-          builder.append(join.mJoinSource.mTable != null
-              ? join.mJoinSource.mTable
-              : SURROUND_WITH_PARENS.apply(join.mJoinSource.mSubquery.toRawQuery().mRawQuery)
-          );
+          if (join.mJoinSource.mTable != null) {
+            builder.append(join.mJoinSource.mTable);
+          } else {
+            final RawQuery rawQuery = join.mJoinSource.mSubquery.toRawQuery();
+
+            builder.append(SURROUND_WITH_PARENS.apply(rawQuery.mRawQuery));
+            args.addAll(rawQuery.mRawQueryArgs);
+          }
 
           if (join.mAlias != null) {
             builder.append(" AS ");
@@ -265,12 +530,17 @@ public final class QueryBuilder {
     private List<Object> mOrderByArgs = Lists.newArrayList();
     private Set<String> mTablesUsedInExpressions = Sets.newHashSet();
 
-    private LinkedHashMap<CompoundQueryPart, String> mCompoundQueryParts = Maps.newLinkedHashMap();
+    private LinkedList<QueryOrOperator> mCompoundQueryParts = Lists.newLinkedList();
 
-    private QueryImpl() {
+    public boolean isCompound() {
+      int queryPartsCount = (mCurrentQueryPart.isEmpty() ? 0 : 1) + mCompoundQueryParts.size();
+      return queryPartsCount > 1;
     }
 
-    private QueryImpl(QueryImpl other) {
+    private QueryBuilderImpl() {
+    }
+
+    private QueryBuilderImpl(QueryBuilderImpl other) {
       mLimit = other.mLimit;
       mOffset = other.mOffset;
 
@@ -278,15 +548,20 @@ public final class QueryBuilder {
       mOrderByCollation = other.mOrderByCollation;
       mOrderByOrder = other.mOrderByOrder;
       mOrderClauses = Lists.newCopyOnWriteArrayList(other.mOrderClauses);
+      mOrderByArgs = Lists.newCopyOnWriteArrayList(other.mOrderByArgs);
+      mTablesUsedInExpressions = Sets.newHashSet(other.mTablesUsedInExpressions);
 
       mCurrentQueryPart = new CompoundQueryPart(other.mCurrentQueryPart);
 
-      mCompoundQueryParts = Maps.newLinkedHashMap(other.mCompoundQueryParts);
+      mCompoundQueryParts = Lists.newLinkedList(other.mCompoundQueryParts);
     }
 
-    @Override
-    public Query copy() {
-      return new QueryImpl(this);
+    private QueryBuilderImpl(CompoundQueryPart compoundQueryPart) {
+      mCurrentQueryPart = new CompoundQueryPart(compoundQueryPart);
+    }
+
+    QueryBuilderImpl copy() {
+      return new QueryBuilderImpl(this);
     }
 
     @Override
@@ -294,8 +569,10 @@ public final class QueryBuilder {
       Builder<String> builder = ImmutableSet.builder();
 
       mCurrentQueryPart.getTables(builder);
-      for (CompoundQueryPart part : mCompoundQueryParts.keySet()) {
-        part.getTables(builder);
+      for (QueryOrOperator part : mCompoundQueryParts) {
+        if (part.isQuery()) {
+          part.mQuery.getTables(builder);
+        }
       }
       builder.addAll(mTablesUsedInExpressions);
 
@@ -314,23 +591,42 @@ public final class QueryBuilder {
 
     @Override
     public RawQuery toRawQuery() {
+      boolean currentPartIsNotEmpty = !mCurrentQueryPart.isEmpty();
+      Preconditions.checkState(currentPartIsNotEmpty || mCompoundQueryParts.size() > 1);
+
       buildPendingOrderByClause();
 
       List<String> args = Lists.newArrayList();
       StringBuilder builder = new StringBuilder();
 
-      for (Entry<CompoundQueryPart, String> entry : mCompoundQueryParts.entrySet()) {
-        RawQuery partRawQuery = entry.getKey().toRawQuery();
-        builder.append(partRawQuery.mRawQuery);
-        builder.append(" ");
-        builder.append(entry.getValue());
-        builder.append(" ");
-        args.addAll(partRawQuery.mRawQueryArgs);
+      for (QueryOrOperator part : mCompoundQueryParts) {
+        if (part.isOperator()) {
+          builder.append(" ");
+          builder.append(part.mOperator);
+          builder.append(" ");
+        } else {
+          Query query = part.mQuery;
+          RawQuery partRawQuery = query.toRawQuery();
+
+          if (query.mQueryBuilder.isCompound()) {
+            builder.append("SELECT * FROM (");
+          }
+
+          builder.append(partRawQuery.mRawQuery);
+
+          if (query.mQueryBuilder.isCompound()) {
+            builder.append(")");
+          }
+
+          args.addAll(partRawQuery.mRawQueryArgs);
+        }
       }
 
-      RawQuery lastQueryPart = mCurrentQueryPart.toRawQuery();
-      args.addAll(lastQueryPart.mRawQueryArgs);
-      builder.append(lastQueryPart.mRawQuery);
+      if (currentPartIsNotEmpty) {
+        RawQuery lastQueryPart = mCurrentQueryPart.toRawQuery();
+        args.addAll(lastQueryPart.mRawQueryArgs);
+        builder.append(lastQueryPart.mRawQuery);
+      }
 
       if (!mOrderClauses.isEmpty()) {
         builder.append(" ORDER BY ");
@@ -384,6 +680,7 @@ public final class QueryBuilder {
 
     @Override
     public ColumnAliasBuilder expr(Expression expression) {
+      mCurrentQueryPart.addPendingColumns();
       mCurrentQueryPart.addPendingColumn();
       mCurrentQueryPart.mColumnWithPotentialAlias = expression.getSql();
       mCurrentQueryPart.mTablesUsedInExpressions.addAll(expression.getTables());
@@ -396,7 +693,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query as(String alias) {
+    public QueryBuilder as(String alias) {
       Preconditions.checkState(mCurrentQueryPart.mColumnWithPotentialAlias != null);
       mCurrentQueryPart.mProjection.add(mCurrentQueryPart.mColumnWithPotentialAlias + " AS " + alias);
       mCurrentQueryPart.mColumnWithPotentialAlias = null;
@@ -405,6 +702,7 @@ public final class QueryBuilder {
 
     @Override
     public ColumnListTableSelector columns(String... columns) {
+      mCurrentQueryPart.addPendingColumn();
       mCurrentQueryPart.addPendingColumns();
       if (columns != null) {
         Collections.addAll(mCurrentQueryPart.mColumnsWithPotentialTable, columns);
@@ -414,6 +712,7 @@ public final class QueryBuilder {
 
     @Override
     public ColumnsTableSelector allColumns() {
+      mCurrentQueryPart.addPendingColumn();
       mCurrentQueryPart.addPendingColumns();
       mCurrentQueryPart.mColumnsWithPotentialTable.add("*");
       return mColumnsTableSelectorHelper;
@@ -426,7 +725,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query asColumnNames() {
+    public QueryBuilder asColumnNames() {
       for (String column : mCurrentQueryPart.mColumnsWithPotentialTable) {
         mCurrentQueryPart.mProjection.add(mCurrentQueryPart.mColumnsListsTableWithPotentialAlias + "." + column + " AS " + column);
       }
@@ -438,32 +737,32 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query distinct() {
+    public QueryBuilder distinct() {
       mCurrentQueryPart.mIsDistinct = true;
       return this;
     }
 
     @Override
-    public Query all() {
+    public QueryBuilder all() {
       mCurrentQueryPart.mIsDistinct = false;
       return this;
     }
 
     private static abstract class ColumnsTableSelectorHelper extends QueryBuilderProxy implements ColumnsTableSelector {
-      private ColumnsTableSelectorHelper(Query delegate) {
+      private ColumnsTableSelectorHelper(QueryBuilder delegate) {
         super(delegate);
       }
     }
 
     private ColumnsTableSelectorHelper mColumnsTableSelectorHelper = new ColumnsTableSelectorHelper(this) {
       @Override
-      public Query of(String table) {
+      public QueryBuilder of(String table) {
         for (String column : mCurrentQueryPart.mColumnsWithPotentialTable) {
           mCurrentQueryPart.mProjection.add(table + "." + column);
         }
         mCurrentQueryPart.mColumnsWithPotentialTable.clear();
 
-        return QueryImpl.this;
+        return QueryBuilderImpl.this;
       }
     };
 
@@ -498,23 +797,24 @@ public final class QueryBuilder {
 
     private CompoundQueryHelper mCompoundQueryHelper = new CompoundQueryHelper() {
       @Override
-      public Query select() {
-        mCompoundQueryParts.put(mCurrentQueryPart, mOperation);
+      public QueryBuilder select() {
+        mCompoundQueryParts.add(new QueryOrOperator(new QueryBuilderImpl(mCurrentQueryPart).build()));
+        mCompoundQueryParts.add(new QueryOrOperator(mOperation));
 
         mCurrentQueryPart = new CompoundQueryPart();
 
-        return QueryImpl.this;
+        return QueryBuilderImpl.this;
       }
     };
 
     @Override
-    public Query groupBy(String expression) {
+    public QueryBuilder groupBy(String expression) {
       mCurrentQueryPart.mGroupByExpressions.add(expression);
       return this;
     }
 
     @Override
-    public Query groupBy(Expression expression) {
+    public QueryBuilder groupBy(Expression expression) {
       mCurrentQueryPart.mTablesUsedInExpressions.addAll(expression.getTables());
       if (expression.getArgsCount() > 0) {
         mCurrentQueryPart.mArgs.putAll(QueryPart.GROUP_BY, Arrays.asList(expression.getMergedArgs()));
@@ -524,7 +824,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query having(String having, Object... havingArgs) {
+    public QueryBuilder having(String having, Object... havingArgs) {
       mCurrentQueryPart.mHaving.add(having);
       if (havingArgs != null) {
         mCurrentQueryPart.mArgs.putAll(QueryPart.HAVING, Arrays.asList(havingArgs));
@@ -534,7 +834,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query having(Expression having, Object... havingArgs) {
+    public QueryBuilder having(Expression having, Object... havingArgs) {
       mCurrentQueryPart.mTablesUsedInExpressions.addAll(having.getTables());
       return having(having.getSql(), having.getMergedArgs(havingArgs));
     }
@@ -577,8 +877,13 @@ public final class QueryBuilder {
       return mJoinHelper;
     }
 
+    @Override
+    public JoinAliasBuilder join(QueryBuilder subqueryBuilder) {
+      return join(subqueryBuilder.build());
+    }
+
     private static abstract class JoinHelper extends QueryBuilderProxy implements JoinAliasBuilder {
-      private JoinHelper(Query delegate) {
+      private JoinHelper(QueryBuilder delegate) {
         super(delegate);
       }
     }
@@ -591,12 +896,12 @@ public final class QueryBuilder {
       }
 
       @Override
-      public Query using(String... columns) {
+      public QueryBuilder using(String... columns) {
         Preconditions.checkArgument(columns != null, "Column list in USING clause cannot be null");
         Preconditions.checkArgument(columns.length > 0, "Column list in USING clause cannot be empty");
         mCurrentQueryPart.mPendingJoin.mUsingColumns = columns;
         mCurrentQueryPart.addPendingJoin();
-        return QueryImpl.this;
+        return QueryBuilderImpl.this;
       }
 
       @Override
@@ -639,8 +944,8 @@ public final class QueryBuilder {
         mJoinSource = other.mJoinSource;
         mAlias = other.mAlias;
         mUsingColumns = other.mUsingColumns != null ? Arrays.copyOf(other.mUsingColumns, other.mUsingColumns.length) : null;
-        mConstraints = Lists.newCopyOnWriteArrayList(other.mConstraints);
-        mConstraintsArgs = Lists.newCopyOnWriteArrayList(other.mConstraintsArgs);
+        mConstraints.addAll(other.mConstraints);
+        mConstraintsArgs.addAll(other.mConstraintsArgs);
       }
     }
 
@@ -657,7 +962,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query offset(String expression) {
+    public QueryBuilder offset(String expression) {
       Preconditions.checkState(mLimit != null);
       Preconditions.checkState(mOffset == null);
       mOffset = expression;
@@ -665,7 +970,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query offset(int limit) {
+    public QueryBuilder offset(int limit) {
       return offset(String.valueOf(limit));
     }
 
@@ -690,13 +995,19 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query asc() {
+    public OrderingDirectionSelector collate(CollatingSequence collation) {
+      mOrderByCollation = collation.name();
+      return this;
+    }
+
+    @Override
+    public QueryBuilder asc() {
       mOrderByOrder = " ASC";
       return this;
     }
 
     @Override
-    public Query desc() {
+    public QueryBuilder desc() {
       mOrderByOrder = " DESC";
       return this;
     }
@@ -720,7 +1031,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query where(String selection, Object... selectionArgs) {
+    public QueryBuilder where(String selection, Object... selectionArgs) {
       if (!Strings.isNullOrEmpty(selection)) {
         mCurrentQueryPart.mSelection.add(selection);
         if (selectionArgs != null) {
@@ -732,7 +1043,7 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query where(Expression selection, Object... selectionArgs) {
+    public QueryBuilder where(Expression selection, Object... selectionArgs) {
       if (selection != null) {
         mCurrentQueryPart.mTablesUsedInExpressions.addAll(selection.getTables());
         where(selection.getSql(), selection.getMergedArgs(selectionArgs));
@@ -741,16 +1052,16 @@ public final class QueryBuilder {
     }
 
     private static abstract class TableAliasBuilderImpl extends QueryBuilderProxy implements TableAliasBuilder {
-      private TableAliasBuilderImpl(Query delegate) {
+      private TableAliasBuilderImpl(QueryBuilder delegate) {
         super(delegate);
       }
     }
 
     private TableAliasBuilderImpl mTableAliasBuilder = new TableAliasBuilderImpl(this) {
       @Override
-      public Query as(String alias) {
+      public QueryBuilder as(String alias) {
         mCurrentQueryPart.addPendingTable(alias);
-        return QueryImpl.this;
+        return QueryBuilderImpl.this;
       }
     };
 
@@ -766,6 +1077,11 @@ public final class QueryBuilder {
       mCurrentQueryPart.addPendingTable(null);
       mCurrentQueryPart.mPendingTable = new TableOrSubquery(subquery);
       return mTableAliasBuilder;
+    }
+
+    @Override
+    public TableAliasBuilder from(QueryBuilder subqueryBuilder) {
+      return from(subqueryBuilder.build());
     }
 
     private static class TableOrSubquery {
@@ -784,18 +1100,41 @@ public final class QueryBuilder {
     }
   }
 
-  public interface Query extends DistinctSelector, TableSelector, ColumnSelector, SelectionBuilder, NaturalJoinTypeBuilder, GroupByBuilder, HavingBuilder, OrderByBuilder, LimitBuilder, CompoundQueryBuilder {
-    FluentCursor perform(SQLiteDatabase db);
-    RawQuery toRawQuery();
-    Query copy();
-    Set<String> getTables();
+  private static class QueryOrOperator {
+    final String mOperator;
+    final Query mQuery;
+
+    private QueryOrOperator(String operator) {
+      mOperator = operator;
+      mQuery = null;
+    }
+
+    private QueryOrOperator(Query query) {
+      mOperator = null;
+      mQuery = query;
+    }
+
+    private boolean isOperator() {
+      return mOperator != null;
+    }
+
+    private boolean isQuery() {
+      return mQuery != null;
+    }
   }
 
-  private static class QueryBuilderProxy implements Query {
+  public interface QueryBuilder extends DistinctSelector, TableSelector, ColumnSelector, SelectionBuilder, NaturalJoinTypeBuilder, GroupByBuilder, HavingBuilder, OrderByBuilder, LimitBuilder, CompoundOperator {
+    Query build();
+    RawQuery toRawQuery();
+    Set<String> getTables();
+    FluentCursor perform(SQLiteDatabase db);
+  }
 
-    private final Query mDelegate;
+  private static class QueryBuilderProxy implements QueryBuilder {
 
-    private QueryBuilderProxy(Query delegate) {
+    private final QueryBuilder mDelegate;
+
+    private QueryBuilderProxy(QueryBuilder delegate) {
       mDelegate = delegate;
     }
 
@@ -855,22 +1194,22 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query groupBy(String expression) {
+    public QueryBuilder groupBy(String expression) {
       return mDelegate.groupBy(expression);
     }
 
     @Override
-    public Query groupBy(Expression expression) {
+    public QueryBuilder groupBy(Expression expression) {
       return mDelegate.groupBy(expression);
     }
 
     @Override
-    public Query having(String having, Object... havingArgs) {
+    public QueryBuilder having(String having, Object... havingArgs) {
       return mDelegate.having(having, havingArgs);
     }
 
     @Override
-    public Query having(Expression having, Object... havingArgs) {
+    public QueryBuilder having(Expression having, Object... havingArgs) {
       return mDelegate.having(having, havingArgs);
     }
 
@@ -892,6 +1231,11 @@ public final class QueryBuilder {
     @Override
     public JoinAliasBuilder join(Query subquery) {
       return mDelegate.join(subquery);
+    }
+
+    @Override
+    public JoinAliasBuilder join(QueryBuilder subqueryBuilder) {
+      return mDelegate.join(subqueryBuilder);
     }
 
     @Override
@@ -920,12 +1264,12 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query where(String selection, Object... selectionArgs) {
+    public QueryBuilder where(String selection, Object... selectionArgs) {
       return mDelegate.where(selection, selectionArgs);
     }
 
     @Override
-    public Query where(Expression selection, Object... selectionArgs) {
+    public QueryBuilder where(Expression selection, Object... selectionArgs) {
       return mDelegate.where(selection, selectionArgs);
     }
 
@@ -940,8 +1284,13 @@ public final class QueryBuilder {
     }
 
     @Override
-    public FluentCursor perform(SQLiteDatabase db) {
-      return mDelegate.perform(db);
+    public TableAliasBuilder from(QueryBuilder subqueryBuilder) {
+      return mDelegate.from(subqueryBuilder);
+    }
+
+    @Override
+    public Query build() {
+      return mDelegate.build();
     }
 
     @Override
@@ -950,22 +1299,22 @@ public final class QueryBuilder {
     }
 
     @Override
-    public Query copy() {
-      return mDelegate.copy();
-    }
-
-    @Override
     public Set<String> getTables() {
       return mDelegate.getTables();
     }
 
     @Override
-    public Query distinct() {
+    public FluentCursor perform(SQLiteDatabase db) {
+      return mDelegate.perform(db);
+    }
+
+    @Override
+    public QueryBuilder distinct() {
       return mDelegate.distinct();
     }
 
     @Override
-    public Query all() {
+    public QueryBuilder all() {
       return mDelegate.all();
     }
   }
@@ -973,15 +1322,16 @@ public final class QueryBuilder {
   public interface TableSelector {
     TableAliasBuilder from(String table);
     TableAliasBuilder from(Query subquery);
+    TableAliasBuilder from(QueryBuilder subqueryBuilder);
   }
 
   public interface DistinctSelector {
-    Query distinct();
-    Query all();
+    QueryBuilder distinct();
+    QueryBuilder all();
   }
 
-  public interface TableAliasBuilder extends Query {
-    Query as(String alias);
+  public interface TableAliasBuilder extends QueryBuilder {
+    QueryBuilder as(String alias);
   }
 
   public interface ColumnSelector {
@@ -995,25 +1345,25 @@ public final class QueryBuilder {
     ColumnAliasBuilder expr(Expression expression);
   }
 
-  public interface ColumnsTableSelector extends Query {
-    Query of(String table);
+  public interface ColumnsTableSelector extends QueryBuilder {
+    QueryBuilder of(String table);
   }
 
-  public interface ColumnListTableSelector extends Query {
+  public interface ColumnListTableSelector extends QueryBuilder {
     ColumnsListAliasBuilder of(String table);
   }
 
-  public interface ColumnsListAliasBuilder extends Query {
-    Query asColumnNames();
+  public interface ColumnsListAliasBuilder extends QueryBuilder {
+    QueryBuilder asColumnNames();
   }
 
-  public interface ColumnAliasBuilder extends Query {
-    Query as(String alias);
+  public interface ColumnAliasBuilder extends QueryBuilder {
+    QueryBuilder as(String alias);
   }
 
   public interface SelectionBuilder {
-    Query where(String selection, Object... selectionArgs);
-    Query where(Expression selection, Object... selectionArgs);
+    QueryBuilder where(String selection, Object... selectionArgs);
+    QueryBuilder where(Expression selection, Object... selectionArgs);
   }
 
   public interface JoinTypeBuilder extends JoinBuilder {
@@ -1028,6 +1378,7 @@ public final class QueryBuilder {
   public interface JoinBuilder {
     JoinAliasBuilder join(String table);
     JoinAliasBuilder join(Query subquery);
+    JoinAliasBuilder join(QueryBuilder subqueryBuilder);
   }
 
   public interface JoinAliasBuilder extends JoinConstraintBuilder {
@@ -1035,22 +1386,22 @@ public final class QueryBuilder {
   }
 
   public interface JoinConstraintBuilder extends JoinOnConstraintBuilder {
-    Query using(String... columns);
+    QueryBuilder using(String... columns);
   }
 
-  public interface JoinOnConstraintBuilder extends Query {
+  public interface JoinOnConstraintBuilder extends QueryBuilder {
     JoinOnConstraintBuilder on(String constraint, Object... constraintArgs);
     JoinOnConstraintBuilder on(Expression constraint, Object... constraintArgs);
   }
 
   public interface GroupByBuilder {
-    Query groupBy(String expression);
-    Query groupBy(Expression expression);
+    QueryBuilder groupBy(String expression);
+    QueryBuilder groupBy(Expression expression);
   }
 
   public interface HavingBuilder {
-    Query having(String having, Object... havingArgs);
-    Query having(Expression having, Object... havingArgs);
+    QueryBuilder having(String having, Object... havingArgs);
+    QueryBuilder having(Expression having, Object... havingArgs);
   }
 
   public interface OrderByBuilder {
@@ -1060,11 +1411,12 @@ public final class QueryBuilder {
 
   public interface OrderingTermBuilder extends OrderingDirectionSelector {
     OrderingDirectionSelector collate(String collation);
+    OrderingDirectionSelector collate(CollatingSequence collation);
   }
 
-  public interface OrderingDirectionSelector extends Query {
-    Query asc();
-    Query desc();
+  public interface OrderingDirectionSelector extends QueryBuilder {
+    QueryBuilder asc();
+    QueryBuilder desc();
   }
 
   public interface LimitBuilder {
@@ -1072,12 +1424,12 @@ public final class QueryBuilder {
     LimitOffsetBuilder limit(int limit);
   }
 
-  public interface LimitOffsetBuilder extends Query {
-    Query offset(String expression);
-    Query offset(int limit);
+  public interface LimitOffsetBuilder extends QueryBuilder {
+    QueryBuilder offset(String expression);
+    QueryBuilder offset(int limit);
   }
 
-  public interface CompoundQueryBuilder {
+  public interface CompoundOperator {
     UnionTypeSelector union();
     NextQueryPartStart intersect();
     NextQueryPartStart except();
@@ -1088,6 +1440,6 @@ public final class QueryBuilder {
   }
 
   public interface NextQueryPartStart {
-    Query select();
+    QueryBuilder select();
   }
 }

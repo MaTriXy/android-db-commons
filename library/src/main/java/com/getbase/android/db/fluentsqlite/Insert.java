@@ -2,7 +2,7 @@ package com.getbase.android.db.fluentsqlite;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import com.getbase.android.db.fluentsqlite.QueryBuilder.Query;
+import com.getbase.android.db.fluentsqlite.Query.QueryBuilder;
 import com.getbase.android.db.provider.Utils;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
@@ -15,20 +15,75 @@ import android.database.sqlite.SQLiteStatement;
 import java.util.Collections;
 import java.util.List;
 
-public class Insert implements InsertTableSelector, InsertFormSelector, InsertValuesBuilder {
-  String mTable;
-  ContentValues mValues = new ContentValues();
-  List<String> mQueryFormColumns = Lists.newArrayList();
+public class Insert implements InsertValuesBuilder {
+  final String mTable;
+  final ContentValues mValues;
 
-  private Insert() {
+  private Insert(String table, ContentValues values) {
+    mTable = table;
+    mValues = values;
   }
 
   public static InsertTableSelector insert() {
-    return new Insert();
+    return new InsertBuilder();
+  }
+
+  static class InsertBuilder implements InsertTableSelector, InsertFormSelector {
+    String mTable;
+    List<String> mQueryFormColumns = Lists.newArrayList();
+
+    @Override
+    public InsertFormSelector into(String table) {
+      mTable = checkNotNull(table);
+      return this;
+    }
+
+    @Override
+    public DefaultValuesInsert defaultValues(String nullColumnHack) {
+      return new DefaultValuesInsert(mTable, checkNotNull(nullColumnHack));
+    }
+
+    @Override
+    public InsertSubqueryForm columns(String... columns) {
+      Preconditions.checkArgument(columns != null, "Column list cannot be null");
+      Collections.addAll(mQueryFormColumns, columns);
+
+      return this;
+    }
+
+    @Override
+    public InsertWithSelect resultOf(Query query) {
+      checkNotNull(query);
+
+      return new InsertWithSelect(mTable, query.toRawQuery(), mQueryFormColumns);
+    }
+
+    @Override
+    public InsertWithSelect resultOf(QueryBuilder queryBuilder) {
+      checkNotNull(queryBuilder);
+      return resultOf(queryBuilder.build());
+    }
+
+    @Override
+    public Insert values(ContentValues values) {
+      return new Insert(mTable, new ContentValues(values));
+    }
+
+    @Override
+    public Insert value(String column, Object value) {
+      ContentValues values = new ContentValues();
+      Utils.addToContentValues(column, value, values);
+
+      return new Insert(mTable, values);
+    }
   }
 
   public long perform(SQLiteDatabase db) {
     return db.insert(mTable, null, mValues);
+  }
+
+  public long performOrThrow(SQLiteDatabase db) {
+    return db.insertOrThrow(mTable, null, mValues);
   }
 
   public static class InsertWithSelect {
@@ -65,6 +120,14 @@ public class Insert implements InsertTableSelector, InsertFormSelector, InsertVa
         statement.close();
       }
     }
+
+    public long performOrThrow(SQLiteDatabase db) {
+      long result = perform(db);
+      if (result == -1) {
+        throw new RuntimeException("Insert failed");
+      }
+      return result;
+    }
   }
 
   public static class DefaultValuesInsert {
@@ -76,35 +139,13 @@ public class Insert implements InsertTableSelector, InsertFormSelector, InsertVa
       mNullColumnHack = nullColumnHack;
     }
 
-    public void perform(SQLiteDatabase db) {
-      db.insert(mTable, mNullColumnHack, null);
+    public long perform(SQLiteDatabase db) {
+      return db.insert(mTable, mNullColumnHack, null);
     }
-  }
 
-  @Override
-  public InsertFormSelector into(String table) {
-    mTable = checkNotNull(table);
-    return this;
-  }
-
-  @Override
-  public DefaultValuesInsert defaultValues(String nullColumnHack) {
-    return new DefaultValuesInsert(mTable, checkNotNull(nullColumnHack));
-  }
-
-  @Override
-  public InsertSubqueryForm columns(String... columns) {
-    Preconditions.checkArgument(columns != null, "Column list cannot be null");
-    Collections.addAll(mQueryFormColumns, columns);
-
-    return this;
-  }
-
-  @Override
-  public InsertWithSelect resultOf(Query query) {
-    checkNotNull(query);
-
-    return new InsertWithSelect(mTable, query.toRawQuery(), mQueryFormColumns);
+    public long performOrThrow(SQLiteDatabase db) {
+      return db.insertOrThrow(mTable, mNullColumnHack, null);
+    }
   }
 
   @Override

@@ -1,11 +1,12 @@
 package com.getbase.android.db;
 
-import static org.fest.assertions.Assertions.assertThat;
+import static com.google.common.truth.Truth.ASSERT;
+import static com.google.common.truth.Truth.assertThat;
 
 import com.getbase.android.db.cursors.Cursors;
 import com.getbase.android.db.cursors.SingleRowTransforms;
+import com.getbase.android.db.fluentsqlite.Query;
 import com.getbase.android.db.provider.Utils;
-import com.getbase.android.db.fluentsqlite.QueryBuilder;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -35,7 +36,6 @@ public class UtilityClassesTest {
         { Cursors.class },
         { SingleRowTransforms.class },
         { Utils.class },
-        { QueryBuilder.class },
     });
   }
 
@@ -43,14 +43,14 @@ public class UtilityClassesTest {
   public void shouldBeWellDefined() throws Exception {
     assertThat(mKlass.getSuperclass()).isEqualTo(Object.class);
     assertThat(Modifier.isFinal(mKlass.getModifiers())).isTrue();
-    assertThat(mKlass.getDeclaredConstructors()).hasSize(1);
+    assertThat(mKlass.getDeclaredConstructors()).hasLength(1);
 
     final Constructor<?> constructor = mKlass.getDeclaredConstructor();
     assertThat(constructor.isAccessible()).isFalse();
     assertThat(Modifier.isPrivate(constructor.getModifiers())).isTrue();
 
     for (final Method method : mKlass.getDeclaredMethods()) {
-      assertThat(Modifier.isStatic(method.getModifiers())).describedAs(method.getName()).isTrue();
+      assertThat(Modifier.isStatic(method.getModifiers())).named(method.getName()).isTrue();
     }
   }
 }

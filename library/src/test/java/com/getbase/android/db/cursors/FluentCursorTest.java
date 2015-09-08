@@ -1,7 +1,9 @@
 package com.getbase.android.db.cursors;
 
-import static org.fest.assertions.Assertions.assertThat;
+import static com.google.common.truth.Truth.assertThat;
 import static org.fest.assertions.api.ANDROID.assertThat;
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.not;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.*;
 
@@ -23,6 +25,8 @@ import org.robolectric.annotation.Config;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.NoSuchElementException;
 
 @RunWith(RobolectricTestRunner.class)
@@ -69,7 +73,7 @@ public class FluentCursorTest {
   @Test
   public void shouldRecognizeNullAsAnEmptyCursor() throws Exception {
     final FluentCursor cursor = new FluentCursor(null);
-    assertThat(cursor.getCount()).isZero();
+    assertThat(cursor.getCount()).is(0);
   }
 
   @Test
@@ -99,7 +103,7 @@ public class FluentCursorTest {
   }
 
   @Test
-  public void shouldSuccessfullyTransformToMap() throws Exception {
+  public void shouldSuccessfullyTransformToMultimap() throws Exception {
     final MatrixCursor cursor = buildMatrixCursor(10);
     final FluentCursor fluentCursor = new FluentCursor(cursor);
     final LinkedHashMultimap<Integer, Long> transformed = fluentCursor.toMultimap(
@@ -107,12 +111,12 @@ public class FluentCursorTest {
         SingleRowTransforms.getColumn(TEST_COLUMN).asLong());
 
     assertThat(transformed.size()).isEqualTo(cursor.getCount());
-    assertThat(transformed.keySet()).containsOnly(ContiguousSet.create(Range.closed(0, 9), DiscreteDomain.integers()).toArray());
-    assertThat(transformed.values()).containsOnly(18L);
+    assertThat(transformed.keySet()).containsExactly(ContiguousSet.create(Range.closed(0, 9), DiscreteDomain.integers()).toArray());
+    assertThat(transformed.values()).containsExactlyElementsIn(Collections.nCopies(10, 18L));
   }
 
   @Test
-  public void shouldTransformToMapWithTheSameIterationOrderAsCursorRows() throws Exception {
+  public void shouldTransformToMultimapWithTheSameIterationOrderAsCursorRows() throws Exception {
     final MatrixCursor cursor = buildMatrixCursor(3);
     final FluentCursor fluentCursor = new FluentCursor(cursor);
     final LinkedHashMultimap<Integer, Long> transformed = fluentCursor.toMultimap(
@@ -123,10 +127,67 @@ public class FluentCursorTest {
   }
 
   @Test
-  public void shouldCloseCursorAfterItIsTransformedToMap() throws Exception {
+  public void shouldCloseCursorAfterItIsTransformedToMultimap() throws Exception {
     final MatrixCursor cursor = new MatrixCursor(new String[] { TEST_COLUMN });
     final FluentCursor fluentCursor = new FluentCursor(cursor);
     fluentCursor.toMultimap(Functions.constant(null), Functions.constant(null));
+    assertThat(fluentCursor.isClosed()).isTrue();
+  }
+
+  @Test
+  public void shouldAlwaysCloseCursorAfterCallingToMultimap() throws Exception {
+    final FluentCursor fluentCursor = new FluentCursor(buildMatrixCursor(10));
+
+    try {
+      fluentCursor.toMultimap(KABOOM, KABOOM);
+    } catch (Throwable t) {
+      // ignore
+    }
+
+    assertThat(fluentCursor.isClosed()).isTrue();
+  }
+
+  @Test
+  public void shouldSuccessfullyTransformToMap() throws Exception {
+    final MatrixCursor cursor = buildMatrixCursor(10);
+    final FluentCursor fluentCursor = new FluentCursor(cursor);
+    final Map<Integer, Long> transformed = fluentCursor.toMap(
+        SingleRowTransforms.getColumn(OTHER_COLUMN).asInteger(),
+        SingleRowTransforms.getColumn(TEST_COLUMN).asLong());
+
+    assertThat(transformed.size()).isEqualTo(cursor.getCount());
+    assertThat(transformed.keySet()).containsExactly(ContiguousSet.create(Range.closed(0, 9), DiscreteDomain.integers()).toArray());
+    assertThat(transformed.values()).containsExactlyElementsIn(Collections.nCopies(10, 18L));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void shouldFailIfCursorTransformedToMapContainsDuplicateKey() throws Exception {
+    final MatrixCursor cursor = new MatrixCursor(new String[] { OTHER_COLUMN, TEST_COLUMN });
+    cursor.addRow(new Object[] { 10, 18L });
+    cursor.addRow(new Object[] { 10, 18L });
+
+    final FluentCursor fluentCursor = new FluentCursor(cursor);
+    fluentCursor.toMap(
+        SingleRowTransforms.getColumn(OTHER_COLUMN).asInteger(),
+        SingleRowTransforms.getColumn(TEST_COLUMN).asLong());
+  }
+
+  @Test
+  public void shouldTransformToMapWithTheSameIterationOrderAsCursorRows() throws Exception {
+    final MatrixCursor cursor = buildMatrixCursor(3);
+    final FluentCursor fluentCursor = new FluentCursor(cursor);
+    final Map<Integer, Long> transformed = fluentCursor.toMap(
+        SingleRowTransforms.getColumn(OTHER_COLUMN).asInteger(),
+        SingleRowTransforms.getColumn(TEST_COLUMN).asLong());
+
+    assertThat(Lists.newArrayList(transformed.keySet())).containsExactly(0, 1, 2);
+  }
+
+  @Test
+  public void shouldCloseCursorAfterItIsTransformedToMap() throws Exception {
+    final MatrixCursor cursor = new MatrixCursor(new String[] { TEST_COLUMN });
+    final FluentCursor fluentCursor = new FluentCursor(cursor);
+    fluentCursor.toMap(Functions.constant(null), Functions.constant(null));
     assertThat(fluentCursor.isClosed()).isTrue();
   }
 
@@ -135,7 +196,7 @@ public class FluentCursorTest {
     final FluentCursor fluentCursor = new FluentCursor(buildMatrixCursor(10));
 
     try {
-      fluentCursor.toMultimap(KABOOM, KABOOM);
+      fluentCursor.toMap(KABOOM, KABOOM);
     } catch (Throwable t) {
       // ignore
     }
@@ -232,7 +293,7 @@ public class FluentCursorTest {
     verify(cursor, never()).moveToNext();
     verify(cursor, never()).moveToLast();
     verify(cursor, never()).moveToPrevious();
-    verify(cursor, never()).moveToPosition(anyInt());
+    verify(cursor, never()).moveToPosition(intThat(not(equalTo(0))));
   }
 
   @Test
@@ -244,7 +305,7 @@ public class FluentCursorTest {
     verify(cursor, never()).moveToNext();
     verify(cursor, never()).moveToLast();
     verify(cursor, never()).moveToPrevious();
-    verify(cursor, never()).moveToPosition(anyInt());
+    verify(cursor, never()).moveToPosition(intThat(not(equalTo(0))));
   }
 
   @Test

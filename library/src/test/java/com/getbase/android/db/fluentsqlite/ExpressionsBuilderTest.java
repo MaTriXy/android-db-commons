@@ -17,9 +17,10 @@ import static com.getbase.android.db.fluentsqlite.Expressions.not;
 import static com.getbase.android.db.fluentsqlite.Expressions.nul;
 import static com.getbase.android.db.fluentsqlite.Expressions.nullIf;
 import static com.getbase.android.db.fluentsqlite.Expressions.sum;
-import static com.getbase.android.db.fluentsqlite.QueryBuilder.select;
-import static org.fest.assertions.Assertions.assertThat;
+import static com.getbase.android.db.fluentsqlite.Query.select;
+import static com.google.common.truth.Truth.assertThat;
 
+import com.getbase.android.db.fluentsqlite.Expressions.CollatingSequence;
 import com.getbase.android.db.fluentsqlite.Expressions.Expression;
 import com.google.common.base.Function;
 import com.google.common.collect.FluentIterable;
@@ -86,11 +87,15 @@ public class ExpressionsBuilderTest {
       .put(column("col_a").and().column("col_b"), "col_a AND col_b")
       .put(column("col_a").and(column("col_b")), "col_a AND (col_b)")
       .put(column("col_a").in(literal(1), literal(2), literal(3)), "col_a IN (1, 2, 3)")
-      .put(column("col_a").in(select().column("id").from("table_a")), "col_a IN (SELECT id FROM table_a)")
+      .put(column("col_a").in(select().column("id").from("table_a").build()), "col_a IN (SELECT id FROM table_a)")
+      .put(column("col_a").notIn(literal(1), literal(2), literal(3)), "col_a NOT IN (1, 2, 3)")
+      .put(column("col_a").notIn(select().column("id").from("table_a").build()), "col_a NOT IN (SELECT id FROM table_a)")
       .put(cases().when(column("col_a").eq().column("col_b")).then(literal(1)).otherwise(literal(0)), "CASE WHEN (col_a == col_b) THEN (1) ELSE (0) END")
       .put(cases().when(column("col_a").eq().column("col_b")).then(literal(1)).when(column("col_a").eq().column("col_c")).then(literal(2)).end(), "CASE WHEN (col_a == col_b) THEN (1) WHEN (col_a == col_c) THEN (2) END")
       .put(cases(column("col_a")).when(column("col_b")).then(literal(1)).end(), "CASE (col_a) WHEN (col_b) THEN (1) END")
       .put(column("timestamp").lt().expr("strftime('%s', 'now')"), "timestamp < strftime('%s', 'now')")
+      .put(column("col_a").collate(CollatingSequence.LOCALIZED), "col_a COLLATE LOCALIZED")
+      .put(expr(column("col_a").eq().literal(0)).or(column("col_b").eq().literal(1)), "(col_a == 0) OR (col_b == 1)")
       .build();
 
   @Parameters

@@ -1,3 +1,7 @@
-language: java
-install: cd library && mvn clean install -DskipTests
-script: mvn clean verify
+language: android
+android:
+  components:
+    - build-tools-22.0.1
+    - android-22
+    - extra
+script: ./gradlew test

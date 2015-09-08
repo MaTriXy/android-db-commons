@@ -181,19 +181,35 @@ LoaderHelper.LoaderDataCallbacks' interface is very similar to the one provided 
 
 Wrap function is applyied in Loader's doInBackground() so you don't have to worry about ANRs in case you want to do something more complex in there.
 
-Building
---------
-This is standard maven project. To build it just execute:
-```shell
-mvn clean package
+Fluent SQLite API
+-----------------
+Concatenating SQL strings is not fun. It's very easy to make a syntax error - miss the space, comma or closing bracket - and cause the runtime error. The other problem arises when you want to modify existing query, for example to apply some filters. To ameliorate this issues, we have created fluent API for basic SQLite operations:
+
+```java
+select()
+    .columns(People.NAME, People.AGE)
+    .from(Tables.PEOPLE)
+    .where(column(People.NAME).eq().arg(), "Ian")
+    .where(column(People.AGE).gt().arg(), 18)
+    .perform(db);
 ```
-in directory with pom.xml.
 
-minSdkVersion = 10
+Note that `perform()` returns `FluentCursor`, which allows you to easily transform query results into POJOs.
+
+Usage
+-----
+Just add the dependency to your `build.gradle`:
+
+```groovy
+dependencies {
+    compile 'com.getbase.android.db:library:0.12.0'
+}
+```
+
+minSdkVersion = 15
 ------------------
-android-db-commons is compatible with Android 2.3 and newer.
-
-The last version supporting older Android versions was [v0.6.3](https://github.com/futuresimple/android-db-commons/tree/v0.6.3).
+The last with minSdkVersion = 10 was [v0.10.1](https://github.com/futuresimple/android-db-commons/tree/v0.10.1).
+The last with minSdkVersion < 10 Android versions was [v0.6.3](https://github.com/futuresimple/android-db-commons/tree/v0.6.3).
 
 Other libraries
 ---------------

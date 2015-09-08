@@ -3,8 +3,8 @@ package com.getbase.android.db.fluentsqlite;
 import static com.getbase.android.db.fluentsqlite.Expressions.arg;
 import static com.getbase.android.db.fluentsqlite.Expressions.column;
 import static com.getbase.android.db.fluentsqlite.Expressions.literal;
-import static com.getbase.android.db.fluentsqlite.QueryBuilder.select;
-import static org.fest.assertions.Assertions.assertThat;
+import static com.getbase.android.db.fluentsqlite.Query.select;
+import static com.google.common.truth.Truth.assertThat;
 
 import com.getbase.android.db.fluentsqlite.Expressions.Expression;
 import com.google.common.base.Function;
@@ -37,8 +37,8 @@ public class ExpressionsArgsCountTest {
       .put(arg(), 1)
       .put(arg().eq().arg(), 2)
       .put(arg().eq(arg()), 2)
-      .put(column("id").in(select().column("id").from("table_a").where(column("priority").eq().arg(), "1")), 1)
-      .put(column("id").in(select().column("id").from("table_a").where("priority=?", "1")), 1)
+      .put(column("id").in(select().column("id").from("table_a").where(column("priority").eq().arg(), "1").build()), 1)
+      .put(column("id").in(select().column("id").from("table_a").where("priority=?", "1").build()), 1)
       .build();
 
   @Parameters

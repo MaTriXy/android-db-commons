@@ -1,6 +1,6 @@
 package com.getbase.android.db.fluentsqlite;
 
-import com.getbase.android.db.fluentsqlite.QueryBuilder.Query;
+import com.getbase.android.db.fluentsqlite.Query.QueryBuilder;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
@@ -66,6 +66,18 @@ public final class Expressions {
     ExpressionCore not();
   }
 
+  public interface UnaryPostfixOperator {
+    ExpressionCombiner collate(CollatingSequence collatingSequence);
+  }
+
+  public enum CollatingSequence {
+    BINARY,
+    NOCASE,
+    RTRIM,
+    UNICODE,
+    LOCALIZED
+  }
+
   public static abstract class Expression {
     Expression() {
     }
@@ -110,6 +122,7 @@ public final class Expressions {
 
     // generic expression
     ExpressionCombiner expr(String expression);
+    ExpressionCombiner expr(Expression expression);
   }
 
   public interface CaseExpressions {
@@ -151,7 +164,12 @@ public final class Expressions {
     ExpressionCombiner is(Expression e);
 
     ExpressionCombiner in(Query subquery);
+    ExpressionCombiner in(QueryBuilder subqueryBuilder);
     ExpressionCombiner in(Expression... e);
+
+    ExpressionCombiner notIn(Query subquery);
+    ExpressionCombiner notIn(QueryBuilder subqueryBuilder);
+    ExpressionCombiner notIn(Expression... e);
 
     ExpressionBuilder or();
     ExpressionCombiner or(Expression e);
@@ -162,7 +180,7 @@ public final class Expressions {
   public interface ExpressionBuilder extends UnaryOperator, ExpressionCore, CaseExpressions {
   }
 
-  public static abstract class ExpressionCombiner extends Expression implements BinaryOperator {
+  public static abstract class ExpressionCombiner extends Expression implements BinaryOperator, UnaryPostfixOperator {
   }
 
   // mirror all method from ExpressionBuilder interface
@@ -192,6 +210,28 @@ public final class Expressions {
 
   public static ExpressionCombiner literal(Object object) {
     return new Builder().literal(object);
+  }
+
+  public static Expression[] literals(Object... objects) {
+    Preconditions.checkNotNull(objects);
+    Expression[] result = new Expression[objects.length];
+
+    for (int i = 0; i < objects.length; i++) {
+      result[i] = literal(objects[i]);
+    }
+
+    return result;
+  }
+
+  public static Expression[] literals(Number... numbers) {
+    Preconditions.checkNotNull(numbers);
+    Expression[] result = new Expression[numbers.length];
+
+    for (int i = 0; i < numbers.length; i++) {
+      result[i] = literal(numbers[i]);
+    }
+
+    return result;
   }
 
   public static ExpressionCombiner sum(Expression e) {
@@ -238,6 +278,10 @@ public final class Expressions {
     return new Builder().expr(expression);
   }
 
+  public static ExpressionCombiner expr(Expression expression) {
+    return new Builder().expr(expression);
+  }
+
   public static ExpressionCombiner join(String on, Expression... e) {
     return new Builder().join(on, e);
   }
@@ -265,18 +309,31 @@ public final class Expressions {
       }
     };
 
-    private void expr(Expression... e) {
+    private void expressions(Expression e) {
+      addArgs(e);
+
+      mBuilder
+          .append("(")
+          .append(e.getSql())
+          .append(")");
+    }
+
+    private void expressions(Expression... e) {
       for (Expression expression : e) {
-        for (Entry<Integer, Object> boundArg : expression.getBoundArgs().entrySet()) {
-          mArgs.put(mArgsCount + boundArg.getKey(), boundArg.getValue());
-        }
-        mArgsCount += expression.getArgsCount();
+        addArgs(expression);
       }
 
       mBuilder
           .append("(")
           .append(ARGS_JOINER.join(getSQLs(e)))
           .append(")");
+    }
+
+    private void addArgs(Expression expression) {
+      for (Entry<Integer, Object> boundArg : expression.getBoundArgs().entrySet()) {
+        mArgs.put(mArgsCount + boundArg.getKey(), boundArg.getValue());
+      }
+      mArgsCount += expression.getArgsCount();
     }
 
     private ExpressionBuilder binaryOperator(String operator) {
@@ -294,7 +351,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner eq(Expression e) {
       eq();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -306,7 +363,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner ne(Expression e) {
       ne();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -318,7 +375,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner gt(Expression e) {
       gt();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -330,7 +387,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner ge(Expression e) {
       ge();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -342,7 +399,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner lt(Expression e) {
       lt();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -354,7 +411,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner le(Expression e) {
       le();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -366,7 +423,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner is(Expression e) {
       is();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -389,10 +446,32 @@ public final class Expressions {
     }
 
     @Override
+    public ExpressionCombiner in(QueryBuilder subqueryBuilder) {
+      return in(subqueryBuilder.build());
+    }
+
+    @Override
     public ExpressionCombiner in(Expression... e) {
       binaryOperator("IN");
-      expr(e);
+      expressions(e);
       return this;
+    }
+
+    @Override
+    public ExpressionCombiner notIn(Query subquery) {
+      mBuilder.append(" NOT");
+      return in(subquery);
+    }
+
+    @Override
+    public ExpressionCombiner notIn(QueryBuilder subqueryBuilder) {
+      return notIn(subqueryBuilder.build());
+    }
+
+    @Override
+    public ExpressionCombiner notIn(Expression... e) {
+      mBuilder.append(" NOT");
+      return in(e);
     }
 
     @Override
@@ -403,7 +482,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner or(Expression e) {
       or();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -415,7 +494,7 @@ public final class Expressions {
     @Override
     public ExpressionCombiner and(Expression e) {
       and();
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -589,13 +668,19 @@ public final class Expressions {
 
     private ExpressionCombiner function(String func, Expression... e) {
       mBuilder.append(func);
-      expr(e);
+      expressions(e);
       return this;
     }
 
     @Override
     public ExpressionCombiner expr(String expr) {
       mBuilder.append(expr);
+      return this;
+    }
+
+    @Override
+    public ExpressionCombiner expr(Expression expression) {
+      expressions(expression);
       return this;
     }
 
@@ -608,14 +693,14 @@ public final class Expressions {
     @Override
     public ExpressionCombiner otherwise(Expression e) {
       mBuilder.append(" ELSE ");
-      expr(e);
+      expressions(e);
       return end();
     }
 
     @Override
     public CaseValue when(Expression e) {
       mBuilder.append(" WHEN ");
-      expr(e);
+      expressions(e);
       return this;
     }
 
@@ -634,14 +719,20 @@ public final class Expressions {
     @Override
     public CaseCondition cases(Expression e) {
       mBuilder.append("CASE ");
-      expr(e);
+      expressions(e);
       return this;
     }
 
     @Override
     public CaseExpressionBuilder then(Expression e) {
       mBuilder.append(" THEN ");
-      expr(e);
+      expressions(e);
+      return this;
+    }
+
+    @Override
+    public ExpressionCombiner collate(CollatingSequence collatingSequence) {
+      mBuilder.append(" COLLATE ").append(collatingSequence.name());
       return this;
     }
   }

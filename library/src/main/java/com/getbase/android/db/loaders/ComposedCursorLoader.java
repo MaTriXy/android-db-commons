@@ -30,7 +30,7 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Arrays;
 
-import javax.annotation.Nullable;
+import android.support.annotation.Nullable;
 
 public class ComposedCursorLoader<T> extends AbstractLoader<T> {
 
@@ -45,7 +45,7 @@ public class ComposedCursorLoader<T> extends AbstractLoader<T> {
   String mSortOrder;
 
   private final Function<Cursor, T> mCursorTransformation;
-  private IdentityLinkedMap<T, Cursor> cursorsForResults = new IdentityLinkedMap<T, Cursor>();
+  private IdentityLinkedMap<T, Cursor> cursorsForResults = new IdentityLinkedMap<>();
 
   @Override
   protected void onStartLoading() {

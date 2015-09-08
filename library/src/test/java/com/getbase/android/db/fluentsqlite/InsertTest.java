@@ -1,17 +1,15 @@
 package com.getbase.android.db.fluentsqlite;
 
 import static com.getbase.android.db.fluentsqlite.Insert.insert;
-import static com.getbase.android.db.fluentsqlite.QueryBuilder.select;
-import static org.fest.assertions.Assertions.assertThat;
+import static com.getbase.android.db.fluentsqlite.Query.select;
+import static com.google.common.truth.Truth.assertThat;
 import static org.fest.assertions.api.ANDROID.assertThat;
 import static org.fest.assertions.api.android.content.ContentValuesEntry.entry;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.getbase.android.db.fluentsqlite.Insert.DefaultValuesInsert;
-import com.getbase.android.db.fluentsqlite.QueryBuilder.Query;
 
-import org.fest.assertions.Assertions;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -65,7 +63,7 @@ public class InsertTest {
 
   @Test
   public void shouldBuildTheInsertInSelectFormWithoutSpecifiedColumns() throws Exception {
-    Query query = select().allColumns().from("B");
+    Query query = select().allColumns().from("B").build();
     insert().into("A").resultOf(query).perform(mDb);
 
     verify(mDb).compileStatement(eq("INSERT INTO A " + query.toRawQuery().mRawQuery));
@@ -77,9 +75,10 @@ public class InsertTest {
     insert()
         .into("A")
         .resultOf(select()
-            .allColumns()
-            .from("B")
-            .where("col=?", 0)
+                .allColumns()
+                .from("B")
+                .where("col=?", 0)
+                .build()
         )
         .perform(mDb);
 
@@ -90,7 +89,7 @@ public class InsertTest {
 
   @Test
   public void shouldBuildTheInsertInSelectFormWithSpecifiedColumns() throws Exception {
-    Query query = select().allColumns().from("B");
+    Query query = select().allColumns().from("B").build();
     insert().into("A").columns("a", "b", "c").resultOf(query).perform(mDb);
 
     verify(mDb).compileStatement(eq("INSERT INTO A (a, b, c) " + query.toRawQuery().mRawQuery));
@@ -99,7 +98,7 @@ public class InsertTest {
 
   @Test
   public void shouldConcatenateSpecifiedColumnsForInsertInSelectForm() throws Exception {
-    Query query = select().allColumns().from("B");
+    Query query = select().allColumns().from("B").build();
     insert().into("A").columns("a", "b").columns("c").resultOf(query).perform(mDb);
 
     verify(mDb).compileStatement(eq("INSERT INTO A (a, b, c) " + query.toRawQuery().mRawQuery));
@@ -108,7 +107,7 @@ public class InsertTest {
 
   @Test(expected = IllegalArgumentException.class)
   public void shouldRejectNullColumnsListInInsertInSelectForm() throws Exception {
-    Query query = select().allColumns().from("B");
+    Query query = select().allColumns().from("B").build();
     insert().into("A").columns((String[]) null).resultOf(query).perform(mDb);
   }
 
@@ -138,7 +137,7 @@ public class InsertTest {
         .values(values)
         .values(valuesToConcatenate);
 
-    Assertions.assertThat(values.containsKey("another_key")).isFalse();
+    assertThat(values.containsKey("another_key")).isFalse();
   }
 
   @Test
@@ -209,5 +208,60 @@ public class InsertTest {
     ArgumentCaptor<ContentValues> contentValuesArgument = ArgumentCaptor.forClass(ContentValues.class);
     verify(mDb).insert(eq("A"), isNull(String.class), contentValuesArgument.capture());
     assertThat(contentValuesArgument.getValue()).contains(entry("col_a", 42));
+  }
+
+  @Test(expected = RuntimeException.class)
+  public void shouldCrashIfPerformOrThrowFailsForInsertWithResultOf() throws Exception {
+    when(mStatement.executeInsert()).thenReturn(-1L);
+    Query query = select()
+        .allColumns().from("B")
+        .build();
+    insert()
+        .into("A")
+        .columns("c")
+        .resultOf(query)
+        .performOrThrow(mDb);
+  }
+
+  @Test
+  public void shouldReturnInsertedIdIfEverythingGoesFine() throws Exception {
+    when(mStatement.executeInsert()).thenReturn(5L);
+    Query query = select().allColumns().from("B").build();
+    long result = insert()
+        .into("A")
+        .columns("c")
+        .resultOf(query)
+        .performOrThrow(mDb);
+    assertThat(result).isEqualTo(5L);
+  }
+
+  @Test
+  public void shouldUseInsertOrThrowWithinPerformOfThrowOfCommonInsert() throws Exception {
+    ContentValues contentValues = new ContentValues();
+    contentValues.put("col_a", 42);
+    insert()
+        .into("A")
+        .values(contentValues)
+        .performOrThrow(mDb);
+    verify(mDb).insertOrThrow(eq("A"), isNull(String.class), eq(contentValues));
+  }
+
+  @Test
+  public void shouldReturnSameResultAsInsertOrThrowForCommonInsert() throws Exception {
+    when(mDb.insertOrThrow(anyString(), anyString(), any(ContentValues.class))).thenReturn(10L);
+    long res = insert()
+        .into("A")
+        .value("col_a", 42)
+        .performOrThrow(mDb);
+    assertThat(res).isEqualTo(10L);
+  }
+
+  @Test
+  public void shouldUseInsertOrThrowWithinPerformOfThrowOfDefaultValuesInsert() throws Exception {
+    insert()
+        .into("A")
+        .defaultValues("nullable_col")
+        .performOrThrow(mDb);
+    verify(mDb).insertOrThrow(eq("A"), eq("nullable_col"), isNull(ContentValues.class));
   }
 }

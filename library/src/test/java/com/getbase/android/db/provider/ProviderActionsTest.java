@@ -1,6 +1,7 @@
 package com.getbase.android.db.provider;
 
-import org.fest.assertions.Assertions;
+import static com.google.common.truth.Truth.assertThat;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -139,7 +140,7 @@ public class ProviderActionsTest {
         .value("key", "value")
         .perform(contentResolverMock);
 
-    Assertions.assertThat(values.containsKey("key")).isFalse();
+    assertThat(values.containsKey("key")).isFalse();
 
     ContentValues valuesToConcatenate = new ContentValues();
     valuesToConcatenate.put("another_key", "another_value");
@@ -149,7 +150,7 @@ public class ProviderActionsTest {
         .values(valuesToConcatenate)
         .perform(contentResolverMock);
 
-    Assertions.assertThat(values.containsKey("another_key")).isFalse();
+    assertThat(values.containsKey("another_key")).isFalse();
   }
 
   @Test
@@ -310,7 +311,7 @@ public class ProviderActionsTest {
         .value("key", "value")
         .perform(contentResolverMock);
 
-    Assertions.assertThat(values.containsKey("key")).isFalse();
+    assertThat(values.containsKey("key")).isFalse();
 
     ContentValues valuesToConcatenate = new ContentValues();
     valuesToConcatenate.put("another_key", "another_value");
@@ -320,7 +321,7 @@ public class ProviderActionsTest {
         .values(valuesToConcatenate)
         .perform(contentResolverMock);
 
-    Assertions.assertThat(values.containsKey("another_key")).isFalse();
+    assertThat(values.containsKey("another_key")).isFalse();
   }
 
   @Test
@@ -398,5 +399,104 @@ public class ProviderActionsTest {
         .perform(contentResolverMock);
 
     verify(contentResolverMock).update(eq(TEST_URI), isNotNull(ContentValues.class), isNull(String.class), isNull(String[].class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullSelectionOnQuery() throws Exception {
+    ProviderAction.query(TEST_URI)
+        .where(null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).query(eq(TEST_URI), isNull(String[].class), isNull(String.class), isNull(String[].class), isNull(String.class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullSelectionOnUpdate() throws Exception {
+    ProviderAction.update(TEST_URI)
+        .where(null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).update(eq(TEST_URI), any(ContentValues.class), isNull(String.class), isNull(String[].class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullSelectionOnDelete() throws Exception {
+    ProviderAction.delete(TEST_URI)
+        .where(null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).delete(eq(TEST_URI), isNull(String.class), isNull(String[].class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullArgumentsForSelectionOnQuery() throws Exception {
+    ProviderAction.query(TEST_URI)
+        .where("col1 IS NULL", (String[]) null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).query(eq(TEST_URI), isNull(String[].class), eq("(col1 IS NULL)"), isNull(String[].class), isNull(String.class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullArgumentsForSelectionOnUpdate() throws Exception {
+    ProviderAction.update(TEST_URI)
+        .where("col1 IS NULL", (String[]) null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).update(eq(TEST_URI), any(ContentValues.class), eq("(col1 IS NULL)"), isNull(String[].class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullArgumentsForSelectionOnDelete() throws Exception {
+    ProviderAction.delete(TEST_URI)
+        .where("col1 IS NULL", (String[]) null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).delete(eq(TEST_URI), eq("(col1 IS NULL)"), isNull(String[].class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullSelectionAndArgumentsOnQuery() throws Exception {
+    ProviderAction.query(TEST_URI)
+        .where(null, (String[]) null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).query(eq(TEST_URI), isNull(String[].class), isNull(String.class), isNull(String[].class), isNull(String.class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullSelectionAndArgumentsOnUpdate() throws Exception {
+    ProviderAction.update(TEST_URI)
+        .where(null, (String[]) null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).update(eq(TEST_URI), any(ContentValues.class), isNull(String.class), isNull(String[].class));
+  }
+
+  @Test
+  public void shouldAllowUsingNullSelectionAndArgumentsOnDelete() throws Exception {
+    ProviderAction.delete(TEST_URI)
+        .where(null, (String[]) null)
+        .perform(contentResolverMock);
+
+    verify(contentResolverMock).delete(eq(TEST_URI), isNull(String.class), isNull(String[].class));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void shouldNotAllowUsingNonNullArgumentsWithNullSelectionOnQuery() throws Exception {
+    ProviderAction.query(TEST_URI)
+        .where(null, "arg1");
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void shouldNotAllowUsingNonNullArgumentsWithNullSelectionOnUpdate() throws Exception {
+    ProviderAction.update(TEST_URI)
+        .where(null, "arg1");
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void shouldNotAllowUsingNonNullArgumentsWithNullSelectionOnDelete() throws Exception {
+    ProviderAction.delete(TEST_URI)
+        .where(null, "arg1");
   }
 }
