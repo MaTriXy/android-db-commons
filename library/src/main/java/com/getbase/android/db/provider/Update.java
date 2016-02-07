@@ -30,7 +30,8 @@ public class Update extends ProviderAction<Integer> implements ConvertibleToOper
     return this;
   }
 
-  public Update where(String selection, Object... selectionArgs) {
+  @SafeVarargs
+  public final <T> Update where(String selection, T... selectionArgs) {
     this.selection.append(selection, selectionArgs);
     return this;
   }
@@ -46,13 +47,13 @@ public class Update extends ProviderAction<Integer> implements ConvertibleToOper
   }
 
   @Override
-  public ContentProviderOperation toContentProviderOperation() {
-    return toContentProviderOperationBuilder().build();
+  public ContentProviderOperation toContentProviderOperation(UriDecorator uriDecorator) {
+    return toContentProviderOperationBuilder(uriDecorator).build();
   }
 
   @Override
-  public Builder toContentProviderOperationBuilder() {
-    return ContentProviderOperation.newUpdate(getUri())
+  public Builder toContentProviderOperationBuilder(UriDecorator uriDecorator) {
+    return ContentProviderOperation.newUpdate(uriDecorator.decorate(getUri()))
         .withSelection(selection.getSelection(), selection.getSelectionArgs())
         .withValues(values);
   }

@@ -21,12 +21,14 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.OperationApplicationException;
 import android.net.Uri;
+import android.net.Uri.Builder;
 import android.os.RemoteException;
 import android.provider.BaseColumns;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
@@ -51,6 +53,27 @@ public class BatcherTest {
     final ContentValues backRefs = shadowOperation.getValuesBackReferences();
     assertThat(backRefs.get("_id")).isEqualTo(0);
     assertThat(backRefs.get("contact_id")).isEqualTo(1);
+  }
+
+  @Test
+  public void shouldResolveSelectionBackReferences() throws Exception {
+    final Insert firstInsert = ProviderAction.insert(Uri.EMPTY);
+    final Insert secondInsert = ProviderAction.insert(Uri.EMPTY);
+    final ArrayList<ContentProviderOperation> operations = Batcher.begin()
+        .append(firstInsert)
+        .append(secondInsert)
+        .append(ProviderAction.update(Uri.EMPTY).value("test", 1L).where(BaseColumns._ID + "=? AND contact_id=?"))
+        .withSelectionBackReference(firstInsert, 0)
+        .withSelectionBackReference(secondInsert, 1)
+        .operations();
+
+    assertThat(operations).hasSize(3);
+
+    final ContentProviderOperation lastOperation = operations.get(2);
+    ShadowContentProviderOperation shadowOperation = Robolectric.shadowOf(lastOperation);
+    final Map<Integer, Integer> backRefs = shadowOperation.getSelectionArgsBackReferences();
+    assertThat(backRefs).containsEntry(0, 0);
+    assertThat(backRefs).containsEntry(1, 1);
   }
 
   @Test
@@ -79,52 +102,6 @@ public class BatcherTest {
 
     final ShadowContentProviderOperation contentProviderOperation = Robolectric.shadowOf(operations.get(0));
     assertThat(contentProviderOperation.getContentValues()).isEqualTo(values);
-  }
-
-  @Test
-  public void shouldMergeBatches() throws Exception {
-    final Batcher firstPart = Batcher.begin()
-        .append(ProviderAction.insert(createFakeUri("first")))
-        .append(ProviderAction.insert(createFakeUri("second")));
-
-    final Batcher secondPart = Batcher.begin()
-        .append(ProviderAction.update(createFakeUri("third")).value("test", 1L));
-
-    final ArrayList<ContentProviderOperation> operations = Batcher.begin()
-        .append(firstPart)
-        .append(secondPart)
-        .operations();
-
-    assertThat(operations).hasSize(3);
-
-    operationAssert(operations.get(0), createFakeUri("first"), ShadowContentProviderOperation.TYPE_INSERT);
-    operationAssert(operations.get(1), createFakeUri("second"), ShadowContentProviderOperation.TYPE_INSERT);
-    operationAssert(operations.get(2), createFakeUri("third"), ShadowContentProviderOperation.TYPE_UPDATE);
-  }
-
-  @Test
-  public void shouldResolveBackReferencesFromPreviousBatch() throws Exception {
-    final Insert firstInsert = ProviderAction.insert(createFakeUri("first"));
-
-    final Batcher firstPart = Batcher.begin()
-        .append(firstInsert)
-        .append(ProviderAction.insert(createFakeUri("second")));
-
-    final Batcher secondPart = Batcher.begin()
-        .append(ProviderAction
-                .update(createFakeUri("third"))
-                .value("test", 1L)
-        ).withValueBackReference(firstInsert, "column");
-
-    final ArrayList<ContentProviderOperation> operations = Batcher.begin()
-        .append(firstPart)
-        .append(secondPart)
-        .operations();
-
-    final ContentProviderOperation lastOperation = Iterables.getLast(operations);
-    ShadowContentProviderOperation shadowLastOperation = Robolectric.shadowOf(lastOperation);
-    final ContentValues backRefs = shadowLastOperation.getValuesBackReferences();
-    assertThat(backRefs.get("column")).isEqualTo(0);
   }
 
   @Test
@@ -164,6 +141,24 @@ public class BatcherTest {
     final Insert first = ProviderAction.insert(createFakeUri("only"));
     Batcher.begin()
         .append(ProviderAction.insert(createFakeUri("only"))).withValueBackReference(first, "column")
+        .operations();
+  }
+
+  @Test(expected = IllegalStateException.class)
+  public void shouldThrowAnExceptionIfPreviousInsertForSelectionBackReferenceIsDuplicated() throws Exception {
+    final Insert first = ProviderAction.insert(createFakeUri("only"));
+    Batcher.begin()
+        .append(first)
+        .append(first)
+        .append(ProviderAction.delete(createFakeUri("only")).where(BaseColumns._ID + "=?")).withSelectionBackReference(first, 0)
+        .operations();
+  }
+
+  @Test(expected = IllegalStateException.class)
+  public void shouldThrowAnExceptionPreviousInsertForSelectionBackReferenceWasNotAddedToBatcher() throws Exception {
+    final Insert first = ProviderAction.insert(createFakeUri("only"));
+    Batcher.begin()
+        .append(ProviderAction.delete(createFakeUri("only")).where(BaseColumns._ID + "=?")).withSelectionBackReference(first, 0)
         .operations();
   }
 
@@ -217,7 +212,7 @@ public class BatcherTest {
   }
 
   @Test(expected = SecurityException.class)
-  public void ifExceptionThrownFromApplyBatchIsNotCheckedThenJustThrowItinResolver() throws Exception {
+  public void ifExceptionThrownFromApplyBatchIsNotCheckedThenJustThrowItInResolver() throws Exception {
     throwAnExceptionInsideResolversApplyBatch(SecurityException.class);
   }
 
@@ -234,6 +229,27 @@ public class BatcherTest {
   @Test(expected = SecurityException.class)
   public void ifExceptionThrownFromApplyBatchIsNotCheckedThenJustThrowItInProviderClient() throws Exception {
     throwAnExceptionInsideClientsApplyBatch(SecurityException.class);
+  }
+
+  @Test
+  public void shouldDecorateOperationsUrisIfSpecified() throws Exception {
+    final ArrayList<ContentProviderOperation> operations = Batcher.begin()
+        .append(ProviderAction.insert(createFakeUri("first")))
+        .append(ProviderAction.update(createFakeUri("second")).value("test", 1L))
+        .append(ProviderAction.delete(createFakeUri("third")))
+        .decorateUrisWith(new UriDecorator() {
+          @Override
+          public Uri decorate(Uri uri) {
+            return Uri.withAppendedPath(uri, "boom");
+          }
+        })
+        .operations();
+
+    assertThat(operations).hasSize(3);
+
+    operationAssert(operations.get(0), createFakeUri("first", "boom"), ShadowContentProviderOperation.TYPE_INSERT);
+    operationAssert(operations.get(1), createFakeUri("second", "boom"), ShadowContentProviderOperation.TYPE_UPDATE);
+    operationAssert(operations.get(2), createFakeUri("third", "boom"), ShadowContentProviderOperation.TYPE_DELETE);
   }
 
   @SuppressWarnings("unchecked")
@@ -254,11 +270,14 @@ public class BatcherTest {
         .applyBatchOrThrow(client);
   }
 
-  private static Uri createFakeUri(String suffix) {
-    return Uri.parse("content://com.fakedomain.base")
-        .buildUpon()
-        .appendPath(suffix)
-        .build();
+  private static Uri createFakeUri(String... pathSegments) {
+    Builder builder = Uri.parse("content://com.fakedomain.base").buildUpon();
+
+    for (String path : pathSegments) {
+      builder.appendPath(path);
+    }
+
+    return builder.build();
   }
 
   private static void operationAssert(ContentProviderOperation operation, Uri uri, int type) {
