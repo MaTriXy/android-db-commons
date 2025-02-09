@@ -1,10 +1,11 @@
 package com.getbase.android.db.loaders;
 
 import android.content.Context;
-import android.support.v4.content.AsyncTaskLoader;
+
+import androidx.loader.content.AsyncTaskLoader;
 
 /**
- * Base class for {@link android.support.v4.content.Loader} which caches
+ * Base class for {@link androidx.loader.content.Loader} which caches
  * the results.
  */
 public abstract class AbstractLoader<T> extends AsyncTaskLoader<T> {
@@ -27,7 +28,11 @@ public abstract class AbstractLoader<T> extends AsyncTaskLoader<T> {
 
     if (isStarted()) {
       if (oldResult != result) {
-        onNewDataDelivered(result);
+        try {
+          onNewDataDelivered(result);
+        } catch (Throwable t) {
+          throw new RuntimeException("Error occurred on delivering new data in loader: " + this, t);
+        }
       }
       super.deliverResult(result);
     }

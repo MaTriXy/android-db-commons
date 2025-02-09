@@ -16,21 +16,27 @@ package com.getbase.android.db.loaders;
  * limitations under the License.
  */
 
-import com.getbase.android.db.common.QueryData;
-import com.google.common.base.Function;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
-
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 
+import com.getbase.android.db.common.QueryData;
+import com.google.common.base.MoreObjects;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Arrays;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
+import androidx.core.os.CancellationSignal;
+import androidx.core.os.OperationCanceledException;
+import androidx.core.util.Pair;
 
 public class ComposedCursorLoader<T> extends AbstractLoader<T> {
 
@@ -44,8 +50,11 @@ public class ComposedCursorLoader<T> extends AbstractLoader<T> {
   String[] mSelectionArgs;
   String mSortOrder;
 
-  private final Function<Cursor, T> mCursorTransformation;
+  @Nullable
+  private CancellationSignal mCancellationSignal = null;
+  private final CancellableFunction<Cursor, T> mCursorTransformation;
   private IdentityLinkedMap<T, Cursor> cursorsForResults = new IdentityLinkedMap<>();
+  private final List<Pair<T, Cursor>> pendingLoadResults = new LinkedList<>();
 
   @Override
   protected void onStartLoading() {
@@ -56,17 +65,43 @@ public class ComposedCursorLoader<T> extends AbstractLoader<T> {
   /* Runs on a worker thread */
   @Override
   public T loadInBackground() {
-    final Cursor cursor = loadCursorInBackground();
-    final T result = mCursorTransformation.apply(cursor);
-    Preconditions.checkNotNull(result, "Function passed to this loader should never return null.");
+    Cursor cursor = null;
+    try {
+      CancellationSignal cancellationSignal = initCancellationSignal();
+      cursor = loadCursorInBackground();
+      cancellationSignal.throwIfCanceled();
+      final T result = mCursorTransformation.apply(cursor, cancellationSignal);
+      Preconditions.checkNotNull(result, "Function passed to this loader should never return null.");
 
-    if (cursorsForResults.get(result) != null) {
+      synchronized (pendingLoadResults) {
+        pendingLoadResults.add(new Pair<>(result, cursor));
+      }
+
+      return result;
+    } catch (OperationCanceledException ex) {
       releaseCursor(cursor);
-    } else {
-      cursorsForResults.put(result, cursor);
+      throw ex;
+    } catch (Throwable t) {
+      throw new RuntimeException("Error occurred when running loader: " + this, t);
+    } finally {
+      destroyCancellationSignal();
     }
+  }
 
-    return result;
+  private CancellationSignal initCancellationSignal() {
+    synchronized (this) {
+      if (isLoadInBackgroundCanceled()) {
+        throw new OperationCanceledException();
+      }
+      mCancellationSignal = new CancellationSignal();
+      return mCancellationSignal;
+    }
+  }
+
+  private void destroyCancellationSignal() {
+    synchronized (this) {
+      mCancellationSignal = null;
+    }
   }
 
   private Cursor loadCursorInBackground() {
@@ -77,6 +112,49 @@ public class ComposedCursorLoader<T> extends AbstractLoader<T> {
       cursor.getCount();
     }
     return cursor;
+  }
+
+  @Override
+  public void deliverResult(T result) {
+    Cursor cursor = takePendingCursorForResult(result);
+    if (cursor != null) {
+      if (cursorsForResults.get(result) != null) {
+        releaseCursor(cursor);
+      } else {
+        cursorsForResults.put(result, cursor);
+      }
+    }
+    super.deliverResult(result);
+  }
+
+  @Override
+  public void cancelLoadInBackground() {
+    super.cancelLoadInBackground();
+    synchronized (this) {
+      if (mCancellationSignal != null) {
+        mCancellationSignal.cancel();
+      }
+    }
+  }
+
+  @Override
+  public void onCanceled(T result) {
+    releaseCursor(takePendingCursorForResult(result));
+  }
+
+  @Nullable
+  private Cursor takePendingCursorForResult(T result) {
+    synchronized (pendingLoadResults) {
+      Iterator<Pair<T, Cursor>> i = pendingLoadResults.iterator();
+      while (i.hasNext()) {
+        Pair<T, Cursor> entry = i.next();
+        if (entry.first == result) {
+          i.remove();
+          return entry.second;
+        }
+      }
+      return null;
+    }
   }
 
   @Override
@@ -92,7 +170,7 @@ public class ComposedCursorLoader<T> extends AbstractLoader<T> {
     }
   }
 
-  public ComposedCursorLoader(Context context, QueryData queryData, ImmutableList<Uri> notificationUris, Function<Cursor, T> cursorTransformation) {
+  ComposedCursorLoader(Context context, QueryData queryData, ImmutableList<Uri> notificationUris, CancellableFunction<Cursor, T> cursorTransformation) {
     super(context);
     mObserver = new DisableableContentObserver(new ForceLoadContentObserver());
     mUri = queryData.getUri();
@@ -156,5 +234,18 @@ public class ComposedCursorLoader<T> extends AbstractLoader<T> {
     writer.print(prefix);
     writer.print("mResult=");
     writer.println(mResult);
+  }
+
+  @Override
+  public String toString() {
+    return MoreObjects
+        .toStringHelper(this)
+        .add("mId", getId())
+        .add("mUri", mUri)
+        .add("mProjection", Arrays.toString(mProjection))
+        .add("mSelection", mSelection)
+        .add("mSelectionArgs", Arrays.toString(mSelectionArgs))
+        .add("mSortOrder", mSortOrder)
+        .toString();
   }
 }

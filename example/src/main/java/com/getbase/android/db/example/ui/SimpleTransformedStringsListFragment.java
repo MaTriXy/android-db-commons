@@ -8,12 +8,13 @@ import com.google.common.base.Function;
 import android.content.Context;
 import android.database.Cursor;
 import android.os.Bundle;
-import android.support.v4.app.ListFragment;
-import android.support.v4.content.Loader;
 import android.view.View;
 import android.widget.ArrayAdapter;
 
 import java.util.List;
+
+import androidx.fragment.app.ListFragment;
+import androidx.loader.content.Loader;
 
 public class SimpleTransformedStringsListFragment extends ListFragment implements LoaderHelper.LoaderDataCallbacks<List<String>> {
 
@@ -44,7 +45,6 @@ public class SimpleTransformedStringsListFragment extends ListFragment implement
               return String.format("%s %s", cursor.getString(0), cursor.getString(1));
             }
           })
-          .lazy()
           .build(context);
     }
   };

@@ -198,11 +198,11 @@ Note that `perform()` returns `FluentCursor`, which allows you to easily transfo
 
 Usage
 -----
-Just add the dependency to your `build.gradle`:
+Just add repository and the dependency to your `build.gradle`:
 
 ```groovy
 dependencies {
-    compile 'com.getbase.android.db:library:0.13.1'
+    compile 'com.getbase.android.db:library:0.15.0'
 }
 ```
 
@@ -223,19 +223,15 @@ CursorLoaderBuilder.forUri(myLittleUri)
   .build(getActivity());
 ```
 
-License
--------
+## Publishing new version
 
-    Copyright (C) 2013 Mateusz Herych
+1. Update `VERSION_NAME` in `gradle.properties` file
+2. Merge PR to master
+3. Create new GitHub release with tag name `v` followed by version - e.g. `v0.15.0`
+4. GitHub Actions will automatically build and publish new package in Maven repository
 
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
+## Copyright and license
 
-         http://www.apache.org/licenses/LICENSE-2.0
+Copyright 2013 Zendesk
 
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
+Licensed under the [Apache License, Version 2.0](LICENSE)

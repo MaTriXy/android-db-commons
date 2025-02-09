@@ -1,11 +1,12 @@
-package com.getbase.android.db.shadows;
+package androidx.loader.content;
+
+import android.os.AsyncTask;
 
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 import org.robolectric.annotation.RealObject;
 
-import android.os.AsyncTask;
-import android.support.v4.content.AsyncTaskLoader;
+import androidx.core.os.OperationCanceledException;
 
 @Implements(AsyncTaskLoader.class)
 public class ShadowAsyncTaskLoader<T> {
@@ -19,12 +20,21 @@ public class ShadowAsyncTaskLoader<T> {
 
       @Override
       protected T doInBackground(Void... voids) {
-        return realLoader.loadInBackground();
+        try {
+          return realLoader.loadInBackground();
+        } catch (OperationCanceledException ex) {
+          return null;
+        }
       }
 
       @Override
       protected void onPostExecute(T result) {
-        realLoader.deliverResult(result);
+        //Deliver result only if doInBackground was not cancelled
+        if (result != null) {
+          realLoader.dispatchOnLoadComplete(realLoader.mTask, result);
+        } else {
+          realLoader.dispatchOnCancelled(realLoader.mCancellingTask, null);
+        }
       }
     }.execute();
   }
